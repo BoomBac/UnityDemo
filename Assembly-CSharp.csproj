@@ -55,7 +55,9 @@
   <ItemGroup>
     <Compile Include="Assets\CameraTest\Scripts\SC_NewCamera.cs" />
     <Compile Include="Assets\Common\Scripts\SimpleCameraController.cs" />
+    <Compile Include="Assets\Cull\CSTest.cs" />
     <Compile Include="Assets\Cull\DrawGrassInstance.cs" />
+    <Compile Include="Assets\Cull\HizMapFeature.cs" />
     <Compile Include="Assets\TransfScene\Scripts\SC_TransfScene.cs" />
   </ItemGroup>
   <ItemGroup>
@@ -64,6 +66,7 @@
     <None Include="Assets\TransfScene\Shaders\PF_UnLight_TextureColor.shader" />
     <None Include="Assets\TransfScene\Shaders\fade.hlsl" />
     <None Include="Assets\TransfScene\Shaders\Fade.shader" />
+    <None Include="Assets\Cull\Shaders\NewComputeShader.compute" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="UnityEngine">
