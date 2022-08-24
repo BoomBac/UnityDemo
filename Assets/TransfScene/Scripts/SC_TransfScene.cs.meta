@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 59c8adf33cb333e439f427e684f55fd6
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences:
+  - SkillSkyMat: {fileID: 2100000, guid: d4c6586ff1bfea042b3981bd10fe2252, type: 2}
+  - SkillPlaneMat: {fileID: 2100000, guid: 473d4d72b552fd8489315955cb42f320, type: 2}
+  - NearPlaneMat: {fileID: 2100000, guid: 0f6e1b743e2b5de48827611ba14b05c1, type: 2}
+  - near_plane: {fileID: 10209, guid: 0000000000000000e000000000000000, type: 0}
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
