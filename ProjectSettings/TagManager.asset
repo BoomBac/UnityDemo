@@ -8,6 +8,7 @@ TagManager:
   - CYE_GrassPrefabRoot
   - CYE_GrassGameObjTag
   - CYE_GrassGroundTag
+  - Grass
   layers:
   - Default
   - TransparentFX

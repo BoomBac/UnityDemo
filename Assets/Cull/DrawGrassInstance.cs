@@ -1,72 +1,34 @@
 ﻿using System.Collections.Generic;
 using UnityEngine;
+using static CullCommon;
 
 //[ExecuteInEditMode]
 public class DrawGrassInstance : MonoBehaviour
 {
-    struct Plane
+    public GrassInfo grass_info;
+
+    bool GrassListDirty = true;
+
+    [Range(0, 100)]
+    public float LODDistance;
+
+    [Range(0, 100)]
+    public float CullDistanceThreshold;
+
+    [Range(0, 180)]
+    public float CullAngleThreshold;
+
+    public struct GrassBatch
     {
-        public Plane(Vector3 ori, Vector3 normal)
+        public GrassBatch(int length)
         {
-            ori_ = ori;
-            normal_ = Vector3.Normalize(normal);
+            transf = new Matrix4x4[1000];
         }
-        public void DebugDraw()
-        {
-            Debug.DrawLine(ori_, ori_ + normal_, Color.cyan);
-        }
-        public Vector3 ori_;
-        public Vector3 normal_;
+        public Matrix4x4[] transf;
     }
 
-    struct BoundBox
-    {
-        public BoundBox(Vector3 min, Vector3 max, int flag = 0)
-        {
-            flag_ = flag;
-            min_ = min;
-            max_ = max;
-            points_ = new Vector3[8];
-            points_[0] = min;
-            points_[1] = new Vector3(min.x, max.y, min.z);
-            points_[2] = new Vector3(max.x, max.y, min.z);
-            points_[3] = new Vector3(max.x, min.y, min.z);
-            points_[4] = new Vector3(min.x, min.y, max.z);
-            points_[5] = new Vector3(min.x, max.y, max.z);
-            points_[6] = max;
-            points_[7] = new Vector3(max.x, min.y, max.z);
-        }
+    List<GrassBatch> batch_list;
 
-        public void DebugDraw()
-        {
-            Color col = Color.white;
-            if (flag_ == 1)
-                col = Color.red;
-            else if (flag_ == 2)
-                col = Color.green;
-            else if (flag_ == 3) //for quad node
-                col = Color.yellow;
-
-            Debug.DrawLine(points_[0], points_[1], col);
-            Debug.DrawLine(points_[1], points_[2], col);
-            Debug.DrawLine(points_[2], points_[3], col);
-            Debug.DrawLine(points_[3], points_[0], col);
-
-            Debug.DrawLine(points_[4], points_[5], col);
-            Debug.DrawLine(points_[5], points_[6], col);
-            Debug.DrawLine(points_[6], points_[7], col);
-            Debug.DrawLine(points_[7], points_[4], col);
-
-            Debug.DrawLine(points_[0], points_[4], col);
-            Debug.DrawLine(points_[1], points_[5], col);
-            Debug.DrawLine(points_[2], points_[6], col);
-            Debug.DrawLine(points_[3], points_[7], col);
-        }
-        public Vector3 min_;
-        public Vector3 max_;
-        public int flag_;
-        private Vector3[] points_;
-    }
 
     struct QuadNode
     {
@@ -74,27 +36,28 @@ public class DrawGrassInstance : MonoBehaviour
         {
             aabb_ = new BoundBox(min, max, 3);
             childs_ = new QuadNode[4];
+            has_childs = true;
+            lod_ = 0;
         }
+        public int lod_;
         public BoundBox aabb_;
         public QuadNode[] childs_;
+        public bool has_childs;
     }
+    QuadNode root_;
 
     Vector3[] frustum_vert;
 
-    private enum EFrustumPlane
-    {
-        kNear, kFar, kLeft, kRight, kTop, kBottom
-    }
+    private CullCommon.Plane[] frustum_planes_;
 
-    //private Dictionary<EFrustumPlane, Vector3> frustum_planes_ = new Dictionary<EFrustumPlane, Vector3>();
-    private Plane[] frustum_planes_ = new Plane[6];
-    public int InstanceNum = 1000;
-
-    [Range(0, 20)]
-    public float GrassRange = 20;
+    int InstanceNum = 1000;
+    float GrassRange = 20;
 
     List<Matrix4x4> transf;
+    List<Matrix4x4> culled_transf;
     List<BoundBox> bound_boxs;
+    //自下而上存储节点，当子节点相交时，不会存储其父节点
+    List<QuadNode> grids_culled_;
     public Mesh mesh_grass;
     public Material mat_grass;
     public bool IsDraw = true;
@@ -111,9 +74,13 @@ public class DrawGrassInstance : MonoBehaviour
         Vector3 right = new Vector3(max.x, min.y, center.z);
         Vector3 far = new Vector3(center.x, min.y, max.z);
         Vector3 near = new Vector3(center.x, min.y, min.z);
-
-        if (max_len - Vector3.Distance(main_cam_.transform.position, center) > 0.5f)
+        //最后的0.1为划分阈值，为0的话可能堆栈溢出
+        float dis = Vector3.Distance(main_cam_.transform.position, center);
+        if (dis > LODDistance)
+            root.lod_ = 1;
+        if (max_len - dis > 0.1f)
         {
+            root.has_childs = true;
             root.childs_[0] = new QuadNode(left, far);
             root.childs_[1] = new QuadNode(center, max);
             root.childs_[2] = new QuadNode(min, center);
@@ -121,10 +88,41 @@ public class DrawGrassInstance : MonoBehaviour
             for (int i = 0; i < 4; ++i)
             {
                 GenerateQuadNode(ref root.childs_[i]);
-                root.childs_[i].aabb_.DebugDraw();
+                root.childs_[i].aabb_.DebugDraw(Color.white);
             }
-
         }
+        else
+            root.has_childs = false;
+    }
+
+
+    bool QuadCull(QuadNode node, Camera cam, float threshold)
+    {
+        bool bIntersect = false;
+        Vector3 node_center = (node.aabb_.min_ + node.aabb_.max_) / 2;
+        Vector3 cam_pos = cam.transform.position;
+        float distance = Vector3.Distance(node_center, cam_pos);
+        //在距离和夹角阈值之内的直接不进行剔除检测，直接为相交
+        if (distance < threshold && Mathf.Abs(Vector3.Dot(cam.transform.forward, Vector3.Normalize(node_center - cam_pos))) >= Mathf.Cos(CullAngleThreshold * Mathf.Deg2Rad))
+            bIntersect = true;
+        else
+            bIntersect = FrustumBoundGeneralIntersection(node.aabb_, frustum_planes_);
+        if (!bIntersect) return false;
+        int child_insc_count = 0;
+        if (node.has_childs)
+        {
+            for (int i = 0; i < 4; ++i)
+            {
+                if (QuadCull(node.childs_[i], cam, threshold))
+                    ++child_insc_count;
+            }
+        }
+        //没有子节点相交时才将自身加入交叉节点
+        if (child_insc_count == 0)
+        {
+            grids_culled_.Add(node);
+        }
+        return bIntersect;
     }
 
     void GenerateQuadTree()
@@ -156,129 +154,8 @@ public class DrawGrassInstance : MonoBehaviour
         //Debug.DrawLine(frustum_vert[0], frustum_vert[2], Color.red);
         //Debug.DrawLine(frustum_vert[1], frustum_vert[3], Color.red);
 
-        QuadNode root = new QuadNode(min, max);
-        GenerateQuadNode(ref root);
-
-    }
-    /// <summary>
-    /// </summary>
-    /// <returns>0为视椎体外，1为相交于视椎体，2在视椎体内</returns>
-    int FrustumBoundIntersection(BoundBox aabb)
-    {
-        Vector3 min = aabb.min_;
-        Vector3 max = aabb.max_;
-        int res = 0;
-        for (int i = 0; i < 6; ++i)
-        {
-            Vector3 normal = frustum_planes_[i].normal_;
-            Vector3 pos = frustum_planes_[i].ori_;
-            Vector3 p = min;
-            Vector3 n = max;
-            Vector3 center = (p + n) / 2;
-            //包围盒在平面外侧
-            if (Vector3.Dot(center - pos, normal) > 0)
-            {
-                if (normal.x <= 0)
-                {
-                    p.x = max.x;
-                    n.x = min.x;
-                }
-                if (normal.y <= 0)
-                {
-                    p.y = max.y;
-                    n.y = min.y;
-                }
-                if (normal.z <= 0)
-                {
-                    p.z = max.z;
-                    n.z = min.z;
-                }
-            }
-            else
-            {
-                if (normal.x >= 0)
-                {
-                    p.x = max.x;
-                    n.x = min.x;
-                }
-                if (normal.y >= 0)
-                {
-                    p.y = max.y;
-                    n.y = min.y;
-                }
-                if (normal.z >= 0)
-                {
-                    p.z = max.z;
-                    n.z = min.z;
-                }
-            }
-            //Debug.DrawLine(p, p + Vector3.up, Color.blue);
-            //Debug.DrawLine(n, n + Vector3.up, Color.yellow);
-            if (Vector3.Dot(p - pos, normal) > 0)  //最近点在外侧，包围盒就在外侧
-            {
-                res = 0;
-                aabb.flag_ = res;
-                return res;
-            }  //外部
-            else if (Vector3.Dot(p - pos, normal) < 0 && Vector3.Dot(n - pos, normal) < 0) //最近点和最远点都在平面内侧，整个包围盒都在视椎体内
-            {
-                if (res != 1) res = 2;
-            }
-            else res = 1; //远外近内，二者相交
-            aabb.flag_ = res;
-        }
-        aabb.DebugDraw();
-        return res;
-    }
-    void GetVirwFrustumPlane()
-    {
-        Vector3 cam_pos = main_cam_.transform.position;
-        float nf_hdis = (main_cam_.nearClipPlane + main_cam_.farClipPlane) * 0.5f;
-        float half_va = main_cam_.fieldOfView * 0.5f;
-        float half_width = Mathf.Tan(half_va * Mathf.Deg2Rad) * main_cam_.farClipPlane * main_cam_.aspect;
-        float half_ha = Mathf.Atan(half_width / main_cam_.farClipPlane) * Mathf.Rad2Deg;
-
-        Vector3 center_up = Quaternion.AngleAxis(-half_va, main_cam_.transform.right) * main_cam_.transform.forward;
-        Vector3 center_bottom = Quaternion.AngleAxis(half_va, main_cam_.transform.right) * main_cam_.transform.forward;
-        Vector3 center_right = Quaternion.AngleAxis(half_ha, main_cam_.transform.up) * main_cam_.transform.forward;
-        Vector3 center_left = Quaternion.AngleAxis(-half_ha, main_cam_.transform.up) * main_cam_.transform.forward;
-
-        frustum_planes_[0].normal_ = -main_cam_.transform.forward;
-        frustum_planes_[1].normal_ = main_cam_.transform.forward;
-        frustum_planes_[2].normal_ = Vector3.Cross(center_up, main_cam_.transform.right);
-        frustum_planes_[3].normal_ = Vector3.Cross(center_bottom, -main_cam_.transform.right);
-        frustum_planes_[4].normal_ = Vector3.Cross(center_left, main_cam_.transform.up);
-        frustum_planes_[5].normal_ = Vector3.Cross(center_right, -main_cam_.transform.up);
-        frustum_planes_[0].ori_ = cam_pos + main_cam_.transform.forward * main_cam_.nearClipPlane;
-        frustum_planes_[1].ori_ = cam_pos + main_cam_.transform.forward * main_cam_.farClipPlane;
-        frustum_planes_[2].ori_ = cam_pos + center_up * nf_hdis / Mathf.Cos(half_va * Mathf.Deg2Rad);
-        frustum_planes_[3].ori_ = cam_pos + center_bottom * nf_hdis / Mathf.Cos(half_va * Mathf.Deg2Rad);
-        frustum_planes_[4].ori_ = cam_pos + center_left * nf_hdis / Mathf.Cos(half_ha * Mathf.Deg2Rad);
-        frustum_planes_[5].ori_ = cam_pos + center_right * nf_hdis / Mathf.Cos(half_ha * Mathf.Deg2Rad);
-
-        //绘制法线视椎体六个面的法线
-        for (int i = 0; i < 6; ++i)
-        {
-            frustum_planes_[i].DebugDraw();
-        }
-    }
-
-    void CalculateBoundBox(int id)
-    {
-        Vector3 min = new Vector3(float.MaxValue, float.MaxValue, float.MaxValue);
-        Vector3 max = new Vector3(float.MinValue, float.MinValue, float.MinValue);
-        foreach (var pos in mesh_grass.vertices)
-        {
-            if (pos.x < min.x) min.x = pos.x;
-            if (pos.y < min.y) min.y = pos.y;
-            if (pos.z < min.z) min.z = pos.z;
-            if (pos.x > max.x) max.x = pos.x;
-            if (pos.y > max.y) max.y = pos.y;
-            if (pos.z > max.z) max.z = pos.z;
-        }
-        min = transf[id].MultiplyPoint(min);
-        max = transf[id].MultiplyPoint(max);
-        bound_boxs.Add(new BoundBox(min, max));
+        root_ = new QuadNode(min, max);
+        GenerateQuadNode(ref root_);
     }
 
     void GenerateRandomPos()
@@ -292,28 +169,91 @@ public class DrawGrassInstance : MonoBehaviour
             transf.Add(mat);
         }
         for (int i = 0; i < InstanceNum; ++i)
-            CalculateBoundBox(i);
+            bound_boxs.Add(CalculateWolrdBoundBox(mesh_grass, transf[i]));
+    }
+
+    void StoreSceneGrassInfo()
+    {
+        if (grass_info)
+        {
+            grass_info.GrassList.Clear();
+            var grass_group = GameObject.FindGameObjectWithTag("Grass");
+            Transform[] transf = grass_group.GetComponentsInChildren<Transform>();
+            for (int i = 0; i < transf.Length; ++i)
+            {
+                grass_info.GrassList.Add(transf[i].localToWorldMatrix);
+            }
+            grass_info.GrassLength = transf.Length;
+            Debug.LogFormat("Grass List's lenght is {0}", transf.Length);
+        }
     }
 
     // Start is called before the first frame update
     void Start()
     {
         main_cam_ = Camera.main;
+        batch_list = new List<GrassBatch>();
         frustum_vert = new Vector3[4];
         transf = new List<Matrix4x4>();
         bound_boxs = new List<BoundBox>();
+        grids_culled_ = new List<QuadNode>();
         GenerateRandomPos();
     }
 
     // Update is called once per frame
     void Update()
     {
-        GenerateQuadTree();
-        GetVirwFrustumPlane();
-        for (int i = 0; i < bound_boxs.Count; ++i)
+        int grass_count = grass_info.GrassList.Count;
+        if (GrassListDirty && grass_count > 0)
         {
-            FrustumBoundIntersection(bound_boxs[i]);
+            int batch_count = grass_count / 1000;
+            int last_batch_num = grass_count % 1000;
+            for (int i = 0; i < batch_count; ++i)
+            {
+                var batch = new GrassBatch(0);
+                for (int j = 0; j < 1000; ++j)
+                {
+                    batch.transf[j] = grass_info.GrassList[i * 1000 + j];
+                }
+                batch_list.Add(batch);
+            }
+            GrassBatch last = new GrassBatch(0);
+            for (int i = 0; i < last_batch_num; ++i)
+                last.transf[i] = grass_info.GrassList[batch_count * 1000 + i];
+            batch_list.Add(last);
+            GrassListDirty = false;
         }
-        Graphics.DrawMeshInstanced(mesh_grass, 0, mat_grass, transf);
+        for (int i = 0; i < batch_list.Count; ++i)
+        {
+            Graphics.DrawMeshInstanced(mesh_grass, 0, mat_grass, batch_list[i].transf);
+        }
+
+        //culled_transf.Clear();
+        //grids_culled_.Clear();
+        //GetVirwFrustumPlane(main_cam_, out frustum_planes_);
+        //GenerateQuadTree();
+        //QuadCull(root_, main_cam_, CullDistanceThreshold);
+        //for (int i = 0; i < grids_culled_.Count; ++i)
+        //    grids_culled_[i].aabb_.DebugDraw(Color.yellow);
+        //for (int i = 0; i < bound_boxs.Count; ++i)
+        //{
+        //    FrustumBoundIntersection(bound_boxs[i], frustum_planes_);
+        //}
+        //Graphics.DrawMeshInstanced(mesh_grass, 0, mat_grass, transf);
+    }
+    //private void OnDrawGizmos()
+    //{
+    //    for (int i = 0; i < grids_culled_.Count; ++i)
+    //    {
+    //        if (grids_culled_[i].lod_ == 0)
+    //            Gizmos.DrawIcon((grids_culled_[i].aabb_.max_ + grids_culled_[i].aabb_.min_) / 2, "lod0",false);
+    //        else
+    //            Gizmos.DrawIcon((grids_culled_[i].aabb_.max_ + grids_culled_[i].aabb_.min_) / 2, "lod1", false);
+    //    }                
+    //}
+    private void OnGUI()
+    {
+        if (GUI.Button(new Rect(100, 100, 100, 100), "StoreGrassInfo"))
+            StoreSceneGrassInfo();
     }
 }

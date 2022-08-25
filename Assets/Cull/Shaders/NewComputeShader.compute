@@ -3,6 +3,18 @@
 
 // Create a RenderTexture with enableRandomWrite flag and set it
 // with cs.SetTexture
+
+// struct Plane
+// {
+//     float3 ori;
+//     float3 normal;
+// }
+// struct AABB
+// {
+//     float3 min;
+//     float3 max;
+// }
+
 RWTexture2D<float4> Result;
 
 [numthreads(8,8,1)]

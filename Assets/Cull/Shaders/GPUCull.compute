@@ -1,0 +1,86 @@
+﻿// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel VFCull
+
+struct Plane
+{
+    float3 ori_;
+    float3 normal_;
+};
+struct AABB
+{
+    float3 min_;
+    float3 max_;
+};
+
+uint instance_count;
+StructuredBuffer<AABB> aabb;
+StructuredBuffer<float4x4> world_mat;
+StructuredBuffer<Plane> vf_plane;
+
+AppendStructuredBuffer<float4x4> cul_res;
+
+void GetTestPoint(float3 wmax,float3 wmin,float3 ptoc,float3 normal,out float3 n,out float3 p)
+{
+    if (dot(ptoc, normal) > 0)
+    {
+        if (normal.x <= 0)
+        {
+            p.x = wmax.x;
+            n.x = wmin.x;
+        }
+        if (normal.y <= 0)
+        {
+            p.y = wmax.y;
+            n.y = wmin.y;
+        }
+        if (normal.z <= 0)
+        {
+            p.z = wmax.z;
+            n.z = wmin.z;
+        }
+    }
+    else
+    {
+        if (normal.x >= 0)
+        {
+            p.x = wmax.x;
+            n.x = wmin.x;
+        }
+        if (normal.y >= 0)
+        {
+            p.y = wmax.y;
+            n.y = wmin.y;
+        }
+        if (normal.z >= 0)
+        {
+            p.z = wmax.z;
+            n.z = wmin.z;
+        }
+    }
+}
+
+[numthreads(640,1,1)]
+void VFCull (uint3 id : SV_DispatchThreadID)
+{
+    if(id.x >= instance_count)
+        return;
+    float3 aabb_min = mul(world_mat[id.x],float4(aabb[0].min_,1.0)).xyz;
+    float3 aabb_max = mul(world_mat[id.x],float4(aabb[0].max_,1.0)).xyz;
+    for (int i = 0; i < 6; ++i)
+    {
+        float3 normal = vf_plane[i].normal_;
+        float3 pos = vf_plane[i].ori_;
+        float3 p = aabb_min;
+        float3 n = aabb_max;
+        float3 center = (p + n) / 2;
+        //包围盒在平面外侧
+        GetTestPoint(aabb_max,aabb_min,center - pos,normal,n,p);
+        if (dot(p - pos, normal) > 0)  //最近点在外侧，包围盒就在外侧
+        {
+            return;
+        }
+        else
+            cul_res.Append(world_mat[id.x]);
+    }
+
+}

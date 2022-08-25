@@ -53,7 +53,8 @@
     <UnityVersion>2019.4.35f1</UnityVersion>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="Assets\TutorialInfo\Scripts\Editor\ReadmeEditor.cs" />
+    <Compile Include="Assets\Common\PrefabPainter\Scripts\Editor\PrafabPainterGUI.cs" />
+    <Compile Include="Assets\Common\PrefabPainter\Scripts\Editor\PrefabPainter.cs" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="UnityEngine">
